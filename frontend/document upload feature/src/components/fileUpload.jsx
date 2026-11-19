@@ -2,9 +2,45 @@
 import React, { useState, useRef } from "react";
 import "../styles/fileUpload.css";
 
-function FileUpload() {
+const ALLOWED_TYPES = {
+  ".pdf": "application/pdf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+};
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_FILES = 5;
+
+function validateFile(file) {
+  const extension = file.name
+    .slice(file.name.lastIndexOf("."))
+    .toLowerCase();
+
+  const expectedMime = ALLOWED_TYPES[extension];
+
+  if (!expectedMime) {
+    return `${file.name}: Unsupported file format.`;
+  }
+
+  if (file.type !== expectedMime) {
+    return `${file.name}: File type and extension do not match.`;
+  }
+
+  if (file.size === 0) {
+    return `${file.name}: Empty files are not allowed.`;
+  }
+
+  if (file.size > MAX_FILE_SIZE) {
+    return `${file.name}: File exceeds 5 MB.`;
+  }
+
+  return null;
+}
+
+function FileUpload() {
   const [files, setFiles] = useState([]);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
 
   // Open file explorer
@@ -12,14 +48,42 @@ function FileUpload() {
     fileInputRef.current.click();
   };
 
-  // Handle selected files
+  // Common validation for Browse and Drag & Drop
+  const handleSelectedFiles = (selectedFiles) => {
+    const validFiles = [];
+    const errors = [];
+
+    selectedFiles.forEach((file) => {
+      const error = validateFile(file);
+
+      if (error) {
+        errors.push(error);
+      } else {
+        validFiles.push(file);
+      }
+    });
+
+    if (errors.length > 0) {
+      alert(errors.join("\n"));
+    }
+
+    if (validFiles.length > 0) {
+      setFiles((previousFiles) => {
+        if (previousFiles.length + validFiles.length > MAX_FILES) {
+          alert(`You can upload a maximum of ${MAX_FILES} files.`);
+          return previousFiles;
+        }
+
+        return [...previousFiles, ...validFiles];
+      });
+    }
+  };
+
+  // Handle selected files from Browse
   const handleFileChange = (event) => {
     const selectedFiles = Array.from(event.target.files);
 
-    setFiles((previousFiles) => [
-      ...previousFiles,
-      ...selectedFiles
-    ]);
+    handleSelectedFiles(selectedFiles);
 
     event.target.value = "";
   };
@@ -30,19 +94,51 @@ function FileUpload() {
       previousFiles.filter((_, i) => i !== index)
     );
   };
-  // Handle file upload
-const handleUpload = () => {
 
-  if (files.length === 0) {
-    alert("Please select files first!");
-    return;
-  }
+  // Upload files to backend
+  const handleUpload = async () => {
+    if (files.length === 0) {
+      alert("Please select files first!");
+      return;
+    }
 
-  console.log("Files ready for upload:", files);
+    setIsUploading(true);
 
-  alert("Files are ready for upload!");
+    try {
+      const formData = new FormData();
 
-};
+      files.forEach((file) => {
+        formData.append("files", file);
+      });
+
+      const response = await fetch(
+        "http://localhost:5000/api/documents/upload",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error?.message || "File upload failed."
+        );
+      }
+
+      alert(data.message);
+
+      console.log("Validated files:", data.files);
+
+      setFiles([]);
+    } catch (error) {
+      console.error("Upload error:", error);
+      alert(error.message || "Unable to connect to the server.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   // Handle drag and drop
   const handleDrop = (event) => {
@@ -50,10 +146,7 @@ const handleUpload = () => {
 
     const droppedFiles = Array.from(event.dataTransfer.files);
 
-    setFiles((previousFiles) => [
-      ...previousFiles,
-      ...droppedFiles
-    ]);
+    handleSelectedFiles(droppedFiles);
   };
 
   // Handle drag over
@@ -63,7 +156,6 @@ const handleUpload = () => {
 
   return (
     <div className="upload-page">
-
       <div className="upload-container">
 
         <h1>File Upload</h1>
@@ -76,8 +168,7 @@ const handleUpload = () => {
           onDrop={handleDrop}
           onDragOver={handleDragOver}
         >
-
-          <div className="upload-icon">☁️</div>
+          <div className="upload-icon">📤</div>
 
           <h3>Drag & Drop Your Files Here</h3>
 
@@ -95,54 +186,55 @@ const handleUpload = () => {
             type="file"
             ref={fileInputRef}
             onChange={handleFileChange}
+            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
             multiple
             hidden
           />
 
           <p className="file-info">
-            Select files from your computer
+            PDF, JPG, JPEG and PNG | Maximum 5 MB per file | Maximum 5 files
           </p>
-
         </div>
 
         {/* Display Selected Files */}
         {files.length > 0 && (
           <div className="file-list">
 
-            <h3>Selected Files</h3>
+            <h3>Selected Files ({files.length}/{MAX_FILES})</h3>
 
             {files.map((file, index) => (
               <div className="file-item" key={index}>
 
                 <span>📄 {file.name}</span>
 
-               <button
-  className="remove-button"
-  onClick={() => handleRemove(index)}
-  type="button"
-  title="Delete file"
-  aria-label={`Delete ${file.name}`}
->
-  🗑️
-</button>
+                <button
+                  className="remove-button"
+                  onClick={() => handleRemove(index)}
+                  type="button"
+                  title="Delete file"
+                  aria-label={`Delete ${file.name}`}
+                  disabled={isUploading}
+                >
+                  🗑️
+                </button>
 
               </div>
             ))}
 
           </div>
         )}
+
         {/* Upload Button */}
-<button
-  className="upload-button"
-  onClick={handleUpload}
-  disabled={files.length === 0}
-  type="button"
->
-  Upload Files
-</button>
+        <button
+          className="upload-button"
+          onClick={handleUpload}
+          disabled={files.length === 0 || isUploading}
+          type="button"
+        >
+          {isUploading ? "Uploading..." : "Upload Files"}
+        </button>
 
       </div>
-
     </div>
   );
 }
