@@ -1,6 +1,9 @@
 
 import express from "express";
 import dotenv from "dotenv";
+import fs from "node:fs/promises";
+import path from "node:path";
+import crypto from "node:crypto";
 
 import { corsConfig, helmetConfig } from "./config/securityConfig.js";
 import { generalLimiter, uploadLimiter } from "./middleware/rateLimiter.js";
@@ -9,10 +12,17 @@ import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 import { upload } from "./config/UploadConfig.js";
 import validationMiddleware from "./middleware/validationMiddleware.js";
 
+// Document management routes
+import fileRoutes from "./routes/fileRoutes.js";
+
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Upload storage directory
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+const METADATA_FILE = path.join(UPLOADS_DIR, "file-metadata.json");
 
 // Security middleware
 app.use(helmetConfig);
@@ -24,6 +34,9 @@ app.use(express.json({ limit: "100kb" }));
 // Rate limiters
 app.use("/api/", generalLimiter);
 app.use("/api/documents/upload", uploadLimiter);
+
+// Document management routes
+app.use("/api/files", fileRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -69,10 +82,11 @@ app.get("/api/error-demo", (req, res, next) => {
   next(error);
 });
 
-// Document upload and validation
+// Document upload, validation and permanent storage
 app.post(
   "/api/documents/upload",
 
+  // Receive files into memory
   (req, res, next) => {
     upload.array("files", 5)(req, res, (error) => {
       if (error) {
@@ -86,18 +100,96 @@ app.post(
     });
   },
 
+  // Validate file type, size and actual file signature
   validationMiddleware,
 
-  (req, res) => {
-    res.status(200).json({
-      success: true,
-      message: "All files passed validation.",
-      files: req.files.map((file) => ({
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size
-      }))
-    });
+  // Save validated files and their original filename metadata
+  async (req, res, next) => {
+    const savedFiles = [];
+
+    try {
+      await fs.mkdir(UPLOADS_DIR, { recursive: true });
+
+      // Read existing metadata
+      let metadata = {};
+
+      try {
+        const metadataContent = await fs.readFile(
+          METADATA_FILE,
+          "utf-8"
+        );
+
+        metadata = JSON.parse(metadataContent);
+      } catch (error) {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      // Save uploaded files
+      for (const file of req.files || []) {
+        const extension = path.extname(file.originalname).toLowerCase();
+
+        const filename = `${crypto.randomUUID()}${extension}`;
+
+        const filePath = path.join(UPLOADS_DIR, filename);
+
+        const uploadDate = new Date().toISOString();
+
+        await fs.writeFile(filePath, file.buffer, { flag: "wx" });
+
+        savedFiles.push({
+          filename,
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          uploadDate
+        });
+
+        // Store original filename and upload date
+        metadata[filename] = {
+          originalname: file.originalname,
+          uploadDate
+        };
+      }
+
+      // Write metadata to a temporary file first
+      const tempMetadataFile =
+        `${METADATA_FILE}.${crypto.randomUUID()}.tmp`;
+
+      try {
+        await fs.writeFile(
+          tempMetadataFile,
+          JSON.stringify(metadata, null, 2),
+          "utf-8"
+        );
+
+        // Replace metadata file
+        await fs.rename(tempMetadataFile, METADATA_FILE);
+
+      } catch (error) {
+        await fs.unlink(tempMetadataFile).catch(() => {});
+        throw error;
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Files validated and uploaded successfully.",
+        files: savedFiles
+      });
+
+    } catch (error) {
+      // Remove newly saved files if upload processing fails
+      await Promise.all(
+        savedFiles.map((file) =>
+          fs.unlink(
+            path.join(UPLOADS_DIR, file.filename)
+          ).catch(() => {})
+        )
+      );
+
+      next(error);
+    }
   }
 );
 
@@ -111,10 +203,14 @@ app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
   console.log("----------------------------------------");
   console.log("Available endpoints:");
-  console.log("GET  /api/health");
-  console.log("GET  /api/security-info");
-  console.log("GET  /api/rate-limit-demo");
-  console.log("GET  /api/error-demo");
-  console.log("POST /api/documents/upload");
+  console.log("GET    /api/health");
+  console.log("GET    /api/security-info");
+  console.log("GET    /api/rate-limit-demo");
+  console.log("GET    /api/error-demo");
+  console.log("POST   /api/documents/upload");
+  console.log("GET    /api/files");
+  console.log("GET    /api/files/:filename");
+  console.log("GET    /api/files/:filename/download");
+  console.log("DELETE /api/files/:filename");
   console.log("----------------------------------------");
 });

@@ -20,6 +20,7 @@ export const corsConfig = cors({
 
 // ─── Helmet Security Headers Configuration ────────────────────────────────────
 // Adds HTTP headers to protect against XSS, Clickjacking, MIME-sniffing etc.
+
 export const helmetConfig = helmet({
     contentSecurityPolicy: {
         directives: {
@@ -30,8 +31,15 @@ export const helmetConfig = helmet({
             connectSrc: ["'self'"],
             fontSrc: ["'self'"],
             objectSrc: ["'none'"],
-            frameSrc: ["'none'"]
+            frameSrc: ["'self'"],
+            frameAncestors: ["'self'", "http://localhost:5173"]
         }
     },
-    crossOriginEmbedderPolicy: false // Allow file downloads
+    frameguard: false,
+    crossOriginResourcePolicy: {
+        policy: "cross-origin"
+    },
+    crossOriginEmbedderPolicy: false
 });
+
+

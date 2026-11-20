@@ -38,7 +38,7 @@ function validateFile(file) {
   return null;
 }
 
-function FileUpload() {
+function FileUpload({ onUploadSuccess }) {
   const [files, setFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
@@ -132,6 +132,10 @@ function FileUpload() {
       console.log("Validated files:", data.files);
 
       setFiles([]);
+
+      // Navigate to Uploaded Documents after successful upload
+      onUploadSuccess?.();
+
     } catch (error) {
       console.error("Upload error:", error);
       alert(error.message || "Unable to connect to the server.");
